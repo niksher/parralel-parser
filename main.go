@@ -15,12 +15,6 @@ func main() {
   const NeededString = "go"
   //максимальное количество потоков для http запросов
   streams := 5
-  //канал для передачи url в потоках
-  mainChan := make(chan string)
-  defer close(mainChan)
-  //канал для передачи количества найденных совпадений в потоках
-  counterChan := make(chan int)
-  defer close(counterChan)
   //счетчик количества совпадений
   counterTotal := 0
 
@@ -40,6 +34,12 @@ func main() {
     streams = sliceLength
   }
 
+  //канал для передачи url в потоках
+  mainChan := make(chan string, 5)
+  defer close(mainChan)
+  //канал для передачи количества найденных совпадений в потоках
+  counterChan := make(chan int)
+
   //создаем отдельный поток, до максимального количества потоков
   for i := 1; i <= streams; i++ {
     go streamer(mainChan, counterChan, NeededString)
@@ -49,12 +49,13 @@ func main() {
   for _, url := range sliceUrls {
     mainChan <- url
   }
-  /*for {
-    countString := <- counterChan
-    counterTotal += countString
-  }*/
+  i := 1
   for countString := range counterChan {
+    if (i == sliceLength) {
+        close(counterChan)
+    }
     counterTotal += countString
+    i++
   }
   //выводим сумму совпадений в консоль
   fmt.Println("Total:", counterTotal)
@@ -75,7 +76,7 @@ func streamer(mainChan chan string, counterChan chan int, neededString string) {
       }
       //получаем сумму совпадений
       count := sendAndCount(url, neededString)
-      //добавляем сумму совпадений в счетчик
+      //добавляем сумму совпадений в канал
       counterChan <- count
   }
 }
@@ -93,19 +94,19 @@ func curlSender(url string) string {
   //формирование GET зарпоса
   req, reqErr := http.NewRequest("GET", url, nil)
   if (reqErr != nil) {
-    fmt.Printf("Request error: %v\n", reqErr)
+    panic("Request error")
   }
   //отрпавка сформированного GET запроса
   res, resErr := http.DefaultClient.Do(req)
   if (resErr != nil) {
-    fmt.Printf("Response error: %v\n", resErr)
+    panic("Response error")
   }
   //отложенное закрытие ресурса отправки, после выхода из функции
   defer res.Body.Close()
   //считываение тела ответа
   body, readErr := ioutil.ReadAll(res.Body)
   if (readErr != nil) {
-    fmt.Printf("Read response body error: %v\n", readErr)
+    panic("Read response body error")
   }
   //возвращение тела ответа в виде строки
   return string(body)
