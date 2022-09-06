@@ -6,18 +6,21 @@ import (
   "io/ioutil"
   "strings"
   "time"
-  "sync"
 )
 
 func main() {
   //метка о начале работы, для того чтобы проверить скорость работы программы
   startTime := time.Now().UnixNano();
   //строка, котороую нужно найти
-  neededString := "go"
+  const NeededString = "go"
   //максимальное количество потоков для http запросов
   streams := 5
-  //канал для передачи данных в потоках
+  //канал для передачи url в потоках
   mainChan := make(chan string)
+  defer close(mainChan)
+  //канал для передачи количества найденных совпадений в потоках
+  counterChan := make(chan int)
+  defer close(counterChan)
   //счетчик количества совпадений
   counterTotal := 0
 
@@ -32,30 +35,27 @@ func main() {
     "https://go.dev/blog/survey2022-q2"}
 
   //если количество урлов меньше максимального количества потоков программы, то ограничиваем максимальное количество потоков до количества url
-  sliceLenght := len(sliceUrls)
-  if (sliceLenght < streams) {
-    streams = sliceLenght
+  sliceLength := len(sliceUrls)
+  if (sliceLength < streams) {
+    streams = sliceLength
   }
-
-
-  //ограничитель потоков
-  var wg sync.WaitGroup
-  //устанавливаем количество потоков в ограничитель
-  wg.Add(streams)
 
   //создаем отдельный поток, до максимального количества потоков
   for i := 1; i <= streams; i++ {
-    go streamer(mainChan, &wg, neededString, &counterTotal)
+    go streamer(mainChan, counterChan, NeededString)
   }
 
   // передаем каждый урл в канал
   for _, url := range sliceUrls {
-      mainChan <- url
+    mainChan <- url
   }
-  //закрываем канал
-  close(mainChan)
-  //ждем пока все каналы отработают
-  wg.Wait()
+  /*for {
+    countString := <- counterChan
+    counterTotal += countString
+  }*/
+  for countString := range counterChan {
+    counterTotal += countString
+  }
   //выводим сумму совпадений в консоль
   fmt.Println("Total:", counterTotal)
   //метка времени окончания работы программы
@@ -64,24 +64,23 @@ func main() {
   fmt.Println(endTime - startTime)
 }
 
-//оснавная функция, которая запускается в потоки
-func streamer(mainChan chan string, wg *sync.WaitGroup, neededString string, counterTotal *int) {
+//основная функция, которая запускается в потоки
+func streamer(mainChan chan string, counterChan chan int, neededString string) {
   //слушает все передачи url в канал
   for {
       url, more := <-mainChan
-      //если это был последний переденный элемент, то перестаем ждать роботу потоков и выходим из функции
+      //если это был последний переденный элемент, то перестаем ждать р работу потоков и выходим из функции
       if more == false {
-          wg.Done()
-          return
+        return
       }
       //получаем сумму совпадений
       count := sendAndCount(url, neededString)
       //добавляем сумму совпадений в счетчик
-      *counterTotal += count
+      counterChan <- count
   }
 }
 
-//функкия объединяющая запрос по http и подсчет совпадений с выводом информации
+//функция объединяющая запрос по http и подсчет совпадений с выводом информации
 func sendAndCount(url string, neededString string) int {
   //отправка http запроса и возврат тела ответа в виде строки
   body := curlSender(url)
@@ -92,13 +91,22 @@ func sendAndCount(url string, neededString string) int {
 //отправка http запроса и возвращение ответа в виде строки
 func curlSender(url string) string {
   //формирование GET зарпоса
-  req, _ := http.NewRequest("GET", url, nil)
+  req, reqErr := http.NewRequest("GET", url, nil)
+  if (reqErr != nil) {
+    fmt.Printf("Request error: %v\n", reqErr)
+  }
   //отрпавка сформированного GET запроса
-  res, _ := http.DefaultClient.Do(req)
+  res, resErr := http.DefaultClient.Do(req)
+  if (resErr != nil) {
+    fmt.Printf("Response error: %v\n", resErr)
+  }
   //отложенное закрытие ресурса отправки, после выхода из функции
   defer res.Body.Close()
   //считываение тела ответа
-  body, _ := ioutil.ReadAll(res.Body)
+  body, readErr := ioutil.ReadAll(res.Body)
+  if (readErr != nil) {
+    fmt.Printf("Read response body error: %v\n", readErr)
+  }
   //возвращение тела ответа в виде строки
   return string(body)
 }
